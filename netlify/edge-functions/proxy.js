@@ -1,7 +1,7 @@
 export default async (request, context) => {
   const upgrade = request.headers.get("upgrade") || "";
   
-  // معالجة اتصالات V2Ray (WebSocket)
+  // 1. معالجة اتصالات V2Ray (WebSocket)
   if (upgrade.toLowerCase() === "websocket") {
     const { socket: clientSocket, response } = Deno.upgradeWebSocket(request);
     
@@ -10,7 +10,15 @@ export default async (request, context) => {
     targetUrl.port = "443";
     targetUrl.protocol = "wss:";
     
-    const targetSocket = new WebSocket(targetUrl.toString());
+    // تمرير بروتوكولات V2Ray الفرعية إن وجدت حتى ميرفضها السيرفر
+    const secProtocol = request.headers.get("sec-websocket-protocol");
+    const targetSocket = secProtocol 
+        ? new WebSocket(targetUrl.toString(), secProtocol)
+        : new WebSocket(targetUrl.toString());
+
+    // السر هنا: إخبار السيرفرين أن البيانات مشفرة (Binary) وليست نصوص
+    clientSocket.binaryType = "arraybuffer";
+    targetSocket.binaryType = "arraybuffer";
 
     let messageQueue = [];
     
@@ -21,7 +29,7 @@ export default async (request, context) => {
     };
 
     clientSocket.onmessage = (e) => {
-      if (targetSocket.readyState === 1) {
+      if (targetSocket.readyState === 1) { // 1 = OPEN
         targetSocket.send(e.data);
       } else {
         messageQueue.push(e.data);
@@ -36,11 +44,13 @@ export default async (request, context) => {
 
     clientSocket.onclose = () => targetSocket.close();
     targetSocket.onclose = () => clientSocket.close();
+    clientSocket.onerror = () => targetSocket.close();
+    targetSocket.onerror = () => clientSocket.close();
     
     return response;
   }
 
-  // معالجة الطلبات العادية (HTTP)
+  // 2. معالجة الطلبات العادية (HTTP)
   const url = new URL(request.url);
   url.hostname = "wathfor.alwaysdata.net";
   url.protocol = "https:";
